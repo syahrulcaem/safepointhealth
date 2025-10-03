@@ -4,8 +4,10 @@ import '../../models/emergency_case_new.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/emergency_provider.dart';
 import '../../services/emergency_cooldown_service.dart';
+import '../../services/gps_service.dart';
 import '../../widgets/emergency_category_dialog.dart';
 import '../auth/login_screen.dart';
+import 'edit_profile_screen.dart';
 
 class CitizenHomeScreen extends StatefulWidget {
   const CitizenHomeScreen({super.key});
@@ -140,21 +142,97 @@ class _HomeTabState extends State<_HomeTab> {
   double? _currentLongitude;
   bool _canReportEmergency = true;
   int _remainingCooldownSeconds = 0;
+  bool _isLoadingLocation = true;
+  String? _locationError;
 
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation();
+    _initializeLocation();
     _checkCooldownStatus();
   }
 
+  Future<void> _initializeLocation() async {
+    await _checkAndRequestPermissions();
+    await _getCurrentLocation();
+  }
+
+  Future<void> _checkAndRequestPermissions() async {
+    try {
+      // Check if GPS is enabled
+      final isGpsEnabled = await GpsService.isGpsEnabled();
+      if (!isGpsEnabled) {
+        if (mounted) {
+          setState(() {
+            _locationError = 'GPS is not enabled. Please enable GPS.';
+            _isLoadingLocation = false;
+          });
+        }
+        return;
+      }
+
+      // Check if we have location permission
+      final hasPermission = await GpsService.hasLocationPermission();
+      if (!hasPermission) {
+        // Request permission
+        final granted = await GpsService.requestLocationPermission();
+        if (!granted) {
+          if (mounted) {
+            setState(() {
+              _locationError = 'Location permission denied.';
+              _isLoadingLocation = false;
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _locationError = 'Error checking permissions: $e';
+          _isLoadingLocation = false;
+        });
+      }
+    }
+  }
+
   Future<void> _getCurrentLocation() async {
-    // Simulate getting current location - you can implement actual GPS logic here
-    // For now, using dummy coordinates
-    setState(() {
-      _currentLatitude = -6.2088;
-      _currentLongitude = 106.8456;
-    });
+    try {
+      setState(() {
+        _isLoadingLocation = true;
+        _locationError = null;
+      });
+
+      // Get current location from GPS device
+      final location = await GpsService.getCurrentLocation();
+
+      if (location != null && mounted) {
+        setState(() {
+          _currentLatitude = location['latitude'];
+          _currentLongitude = location['longitude'];
+          _isLoadingLocation = false;
+          _locationError = null;
+        });
+
+        print(
+            '📍 GPS Location: Lat: $_currentLatitude, Lng: $_currentLongitude');
+      } else {
+        if (mounted) {
+          setState(() {
+            _locationError = 'Unable to get GPS location';
+            _isLoadingLocation = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _locationError = 'Error getting location: $e';
+          _isLoadingLocation = false;
+        });
+      }
+      print('❌ Error getting GPS location: $e');
+    }
   }
 
   Future<void> _checkCooldownStatus() async {
@@ -237,9 +315,7 @@ class _HomeTabState extends State<_HomeTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isGuest
-                                ? 'Hello, Guest'
-                                : 'Hello, ${authProvider.user?.name ?? 'User'}',
+                            isGuest ? 'Halo, Teman' : 'Halo, Teman',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -264,7 +340,70 @@ class _HomeTabState extends State<_HomeTab> {
               },
             ),
 
-            const SizedBox(height: 50),
+            const SizedBox(height: 20),
+
+            // GPS Status Indicator
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: _isLoadingLocation
+                    ? Colors.blue.shade50
+                    : (_locationError != null
+                        ? Colors.red.shade50
+                        : Colors.green.shade50),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _isLoadingLocation
+                      ? Colors.blue.shade200
+                      : (_locationError != null
+                          ? Colors.red.shade200
+                          : Colors.green.shade200),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _isLoadingLocation
+                        ? Icons.gps_not_fixed
+                        : (_locationError != null
+                            ? Icons.gps_off
+                            : Icons.gps_fixed),
+                    color: _isLoadingLocation
+                        ? Colors.blue
+                        : (_locationError != null ? Colors.red : Colors.green),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _isLoadingLocation
+                          ? 'Getting GPS location...'
+                          : (_locationError != null
+                              ? _locationError!
+                              : 'GPS Ready'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _isLoadingLocation
+                            ? Colors.blue.shade700
+                            : (_locationError != null
+                                ? Colors.red.shade700
+                                : Colors.green.shade700),
+                      ),
+                    ),
+                  ),
+                  if (_locationError != null)
+                    IconButton(
+                      icon: const Icon(Icons.refresh, size: 20),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: _getCurrentLocation,
+                      color: Colors.red.shade700,
+                    ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 30),
 
             // Main SOS Button
             Expanded(
@@ -423,6 +562,13 @@ class _HomeTabState extends State<_HomeTab> {
       final user = authProvider.user;
       final isGuest = !authProvider.isAuthenticated || user == null;
 
+      print('\n🚨 === EMERGENCY REPORT DEBUG ===');
+      print('👤 Is Guest: $isGuest');
+      print('🔐 Is Authenticated: ${authProvider.isAuthenticated}');
+      print('👤 User: ${user?.name ?? "null"} (${user?.email ?? "null"})');
+      print('📱 Phone: ${user?.phone ?? "null"}');
+      print('================================\n');
+
       // Check cooldown first
       final canReport = await EmergencyCooldownService.canReportEmergency();
       if (!canReport) {
@@ -486,17 +632,33 @@ class _HomeTabState extends State<_HomeTab> {
         return;
       }
 
-      // Use public emergency endpoint (no authentication required)
-      final success = await emergencyProvider.reportPublicEmergency(
-        latitude: _currentLatitude!,
-        longitude: _currentLongitude!,
-        category: category,
-        description: isGuest
-            ? 'Emergency reported by guest user from mobile app'
-            : 'Emergency reported from mobile app',
-        phone: isGuest ? null : user.phone,
-        accuracy: 10.0,
-      );
+      // Choose endpoint based on authentication status
+      bool success;
+
+      if (isGuest) {
+        // Guest user - use public endpoint (no authentication)
+        print('📡 Sending emergency as GUEST (public endpoint)');
+        success = await emergencyProvider.reportPublicEmergency(
+          latitude: _currentLatitude!,
+          longitude: _currentLongitude!,
+          category: category,
+          description: 'Emergency reported by guest user from mobile app',
+          phone: null,
+          accuracy: 10.0,
+        );
+      } else {
+        // Logged in user - use authenticated endpoint
+        print(
+            '📡 Sending emergency as LOGGED IN USER: ${user.name} (${user.email})');
+        success = await emergencyProvider.reportEmergency(
+          phone: user.phone ?? '', // Use empty string if phone is null
+          latitude: _currentLatitude!,
+          longitude: _currentLongitude!,
+          category: category,
+          description: 'Emergency reported by ${user.name} from mobile app',
+          accuracy: 10.0,
+        );
+      }
 
       // Close loading dialog
       if (mounted) Navigator.pop(context);
@@ -682,7 +844,7 @@ class _ProfileTab extends StatelessWidget {
                       Text(
                         isGuest
                             ? 'Login to access full features'
-                            : (authProvider.user?.email ?? 'user@email.com'),
+                            : (authProvider.user?.email ?? 'Pelapor'),
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 14,
@@ -699,7 +861,7 @@ class _ProfileTab extends StatelessWidget {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          isGuest ? 'GUEST' : 'CITIZEN',
+                          isGuest ? 'GUEST' : 'WARGA',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -845,7 +1007,52 @@ class _ProfileTab extends StatelessWidget {
                           title: const Text('Edit Profile'),
                           trailing:
                               const Icon(Icons.arrow_forward_ios, size: 16),
-                          onTap: () {},
+                          onTap: () async {
+                            print('🔘 Edit Profile button tapped');
+
+                            // Verify authentication before navigating
+                            final authProvider = Provider.of<AuthProvider>(
+                                context,
+                                listen: false);
+
+                            if (!authProvider.isAuthenticated ||
+                                authProvider.user == null) {
+                              print('❌ User not authenticated, showing error');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content:
+                                      Text('Please login to edit your profile'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                              return;
+                            }
+
+                            print(
+                                '✅ User authenticated, navigating to EditProfileScreen');
+
+                            try {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EditProfileScreen(),
+                                ),
+                              );
+                              print('✅ Returned from EditProfileScreen');
+                            } catch (e) {
+                              print(
+                                  '❌ Error navigating to EditProfileScreen: $e');
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Error: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
+                          },
                         ),
                         const Divider(),
                         ListTile(

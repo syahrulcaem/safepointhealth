@@ -19,23 +19,39 @@ class AuthProvider with ChangeNotifier {
     _setLoading(true);
 
     try {
+      print('🔐 Initializing authentication...');
       final isAuth = await AuthService.isAuthenticated();
+      print('📝 Has token: $isAuth');
+
       if (isAuth) {
         final storedUser = await AuthService.getStoredUser();
+        print('👤 Stored user: ${storedUser?.email ?? "null"}');
+
         if (storedUser != null) {
+          // Set user from cache first (offline support)
           _user = storedUser;
           _isAuthenticated = true;
+          notifyListeners(); // Update UI with cached data immediately
 
-          // Try to refresh user data
-          await _refreshUserData();
+          print('✅ User loaded from cache: ${_user!.name}');
+
+          // Try to refresh user data from server in background
+          // Don't wait for this to complete
+          _refreshUserDataInBackground();
         } else {
+          print('❌ No stored user found');
           await _clearAuthState();
         }
       } else {
+        print('❌ No authentication token');
         await _clearAuthState();
       }
     } catch (e) {
-      await _clearAuthState();
+      print('❌ Error initializing auth: $e');
+      // Don't clear auth state on error - keep cached data
+      if (_user == null) {
+        await _clearAuthState();
+      }
       _setError('Failed to initialize authentication');
     } finally {
       _setLoading(false);
@@ -51,6 +67,7 @@ class AuthProvider with ChangeNotifier {
     _clearError();
 
     try {
+      print('🔐 Attempting login for: $email');
       final response = await AuthService.login(
         email: email,
         password: password,
@@ -59,10 +76,13 @@ class AuthProvider with ChangeNotifier {
       if (response.success && response.data != null) {
         _user = response.data!.user;
         _isAuthenticated = true;
+        print('✅ Login successful! User: ${_user!.name} (${_user!.email})');
+        print('📝 User data saved to cache');
         _setLoading(false);
         notifyListeners();
         return true;
       } else {
+        print('❌ Login failed: ${response.message}');
         _setError(response.message ?? 'Login failed');
         _setLoading(false);
         return false;
@@ -171,19 +191,33 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> _refreshUserData() async {
     try {
+      print('🔄 Refreshing user data from server...');
       final response = await AuthService.getCurrentUser();
       if (response.success && response.data != null) {
+        print('✅ User data refreshed: ${response.data!.name}');
         _user = response.data;
         _isAuthenticated = true;
         notifyListeners();
       } else if (response.statusCode == 401) {
+        print('❌ Token expired or invalid');
         // Token expired or invalid
         await _clearAuthState();
+      } else {
+        print('⚠️ Failed to refresh user data: ${response.message}');
       }
     } catch (e) {
       // Don't clear auth state on network errors, just log
-      print('Failed to refresh user data: $e');
+      print('⚠️ Network error refreshing user data: $e');
+      // Keep using cached user data
     }
+  }
+
+  // Refresh user data in background without blocking UI
+  void _refreshUserDataInBackground() {
+    _refreshUserData().catchError((error) {
+      print('Background refresh error: $error');
+      // Silently fail - user can still use cached data
+    });
   }
 
   // Check if user is citizen

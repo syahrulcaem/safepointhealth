@@ -15,9 +15,15 @@ class AuthService {
     required String email,
     required String password,
   }) async {
+    print('🔐 Attempting login for: $email');
+    print('📡 Will try both citizen and petugas endpoints...');
+
+    ApiResponse<LoginResponse>? citizenResult;
+    ApiResponse<LoginResponse>? petugasResult;
+
+    // Try citizen login first
     try {
-      // First try regular citizen login endpoint
-      print('Trying citizen login for: $email');
+      print('\n1️⃣ Trying CITIZEN login endpoint...');
       final response = await http.post(
         Uri.parse(ApiConfig.login),
         headers: ApiConfig.headers,
@@ -27,13 +33,13 @@ class AuthService {
         }),
       );
 
-      print('Citizen login response status: ${response.statusCode}');
-      print('Citizen login response body: ${response.body}');
+      print('   Status: ${response.statusCode}');
+      print('   Body: ${response.body}');
 
       final Map<String, dynamic> responseData = jsonDecode(response.body);
 
       if (response.statusCode == 200 && responseData['success'] == true) {
-        print('Citizen login successful');
+        print('   ✅ CITIZEN login successful!');
         final loginResponse = LoginResponse.fromJson(responseData['data']);
 
         // Save token and user data
@@ -46,32 +52,24 @@ class AuthService {
           statusCode: response.statusCode,
         );
       } else {
-        print('Citizen login failed, trying petugas login...');
-        // If regular login fails, try petugas login endpoint
-        return await petugasLogin(email: email, password: password);
-      }
-    } catch (e) {
-      print('Citizen login exception: $e');
-      // If regular login fails with exception, try petugas login
-      try {
-        return await petugasLogin(email: email, password: password);
-      } catch (e2) {
-        print('Both login attempts failed: $e2');
-        return ApiResponse.error(
-          message: 'Kesalahan jaringan: ${e.toString()}',
-          statusCode: 500,
+        print('   ❌ CITIZEN login failed: ${responseData['message']}');
+        citizenResult = ApiResponse.error(
+          message: responseData['message'] ?? 'Login warga gagal',
+          errors: responseData['errors'],
+          statusCode: response.statusCode,
         );
       }
+    } catch (e) {
+      print('   ⚠️ CITIZEN login exception: $e');
+      citizenResult = ApiResponse.error(
+        message: 'Kesalahan koneksi ke endpoint warga',
+        statusCode: 500,
+      );
     }
-  }
 
-  // Login petugas
-  static Future<ApiResponse<LoginResponse>> petugasLogin({
-    required String email,
-    required String password,
-  }) async {
+    // Try petugas login
     try {
-      print('Trying petugas login with: $email');
+      print('\n2️⃣ Trying PETUGAS login endpoint...');
       final response = await http.post(
         Uri.parse(ApiConfig.petugasLogin),
         headers: ApiConfig.headers,
@@ -81,13 +79,13 @@ class AuthService {
         }),
       );
 
-      print('Petugas login response status: ${response.statusCode}');
-      print('Petugas login response body: ${response.body}');
+      print('   Status: ${response.statusCode}');
+      print('   Body: ${response.body}');
 
       final Map<String, dynamic> responseData = jsonDecode(response.body);
 
       if (response.statusCode == 200 && responseData['success'] == true) {
-        print('Petugas login successful, parsing data...');
+        print('   ✅ PETUGAS login successful!');
         final loginResponse = LoginResponse.fromJson(responseData['data']);
 
         // Save token and user data
@@ -100,18 +98,40 @@ class AuthService {
           statusCode: response.statusCode,
         );
       } else {
-        print('Petugas login failed: ${responseData['message']}');
-        return ApiResponse.error(
+        print('   ❌ PETUGAS login failed: ${responseData['message']}');
+        petugasResult = ApiResponse.error(
           message: responseData['message'] ?? 'Login petugas gagal',
           errors: responseData['errors'],
           statusCode: response.statusCode,
         );
       }
     } catch (e) {
-      print('Petugas login exception: $e');
-      return ApiResponse.error(
-        message: 'Kesalahan jaringan: ${e.toString()}',
+      print('   ⚠️ PETUGAS login exception: $e');
+      petugasResult = ApiResponse.error(
+        message: 'Kesalahan koneksi ke endpoint petugas',
         statusCode: 500,
+      );
+    }
+
+    // Both failed - return appropriate error message
+    print('\n❌ Both login attempts failed');
+
+    // Check if it's wrong credentials (401) or account not found (404)
+    if (citizenResult.statusCode == 401 || petugasResult.statusCode == 401) {
+      return ApiResponse.error(
+        message: 'Email atau password salah',
+        statusCode: 401,
+      );
+    } else if (citizenResult.statusCode == 404 ||
+        petugasResult.statusCode == 404) {
+      return ApiResponse.error(
+        message: 'Akun tidak ditemukan. Silakan daftar terlebih dahulu.',
+        statusCode: 404,
+      );
+    } else {
+      return ApiResponse.error(
+        message: 'Login gagal. Periksa email dan password Anda.',
+        statusCode: citizenResult.statusCode ?? petugasResult.statusCode ?? 500,
       );
     }
   }
@@ -214,15 +234,34 @@ class AuthService {
         );
       }
 
+      // Add timestamp to avoid caching
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final url = '${ApiConfig.me}?t=$timestamp';
+
       final response = await http.get(
-        Uri.parse(ApiConfig.me),
+        Uri.parse(url),
         headers: ApiConfig.authHeaders(token),
       );
+
+      print('=== Get Current User Response ===');
+      print('URL: $url');
+      print('Status: ${response.statusCode}');
+      print('Body: ${response.body}');
+      print('=================================');
 
       final Map<String, dynamic> responseData = jsonDecode(response.body);
 
       if (response.statusCode == 200 && responseData['success'] == true) {
-        final user = User.fromJson(responseData['data']);
+        // Check if response has nested user object
+        var userData = responseData['data'];
+        if (userData != null && userData['user'] != null) {
+          print('✅ Response has nested user object');
+          userData = userData['user'];
+        } else {
+          print('ℹ️ Response has direct user data');
+        }
+
+        final user = User.fromJson(userData);
         await _saveUserData(user);
 
         return ApiResponse.success(
@@ -253,12 +292,17 @@ class AuthService {
   // Get stored user data
   static Future<User?> getStoredUser() async {
     try {
+      print('📖 Reading stored user data...');
       final userJson = await _storage.read(key: _userKey);
-      if (userJson != null) {
-        return User.fromJson(jsonDecode(userJson));
+      if (userJson != null && userJson.isNotEmpty) {
+        final user = User.fromJson(jsonDecode(userJson));
+        print('✅ Stored user found: ${user.name} (${user.email})');
+        return user;
+      } else {
+        print('⚠️ No stored user data found');
       }
     } catch (e) {
-      print('Error getting stored user: $e');
+      print('❌ Error getting stored user: $e');
     }
     return null;
   }
@@ -277,7 +321,23 @@ class AuthService {
 
   // Save user data to FlutterSecureStorage
   static Future<void> _saveUserData(User user) async {
-    await _storage.write(key: _userKey, value: jsonEncode(user.toJson()));
+    try {
+      final userJson = jsonEncode(user.toJson());
+      await _storage.write(key: _userKey, value: userJson);
+      print(
+          '💾 User data saved to secure storage: ${user.name} (${user.email})');
+
+      // Verify save was successful
+      final savedUser = await getStoredUser();
+      if (savedUser != null) {
+        print('✅ Verified: User data persisted successfully');
+      } else {
+        print('⚠️ Warning: User data may not have been saved properly');
+      }
+    } catch (e) {
+      print('❌ Error saving user data: $e');
+      rethrow;
+    }
   }
 
   // Refresh token if needed

@@ -15,7 +15,7 @@ enum Hubungan {
 }
 
 class CitizenProfile {
-  final int id;
+  final int? id; // Made optional because API might not always return it
   final String userId;
   final String? nik;
   final String? whatsappKeluarga;
@@ -29,7 +29,7 @@ class CitizenProfile {
   final DateTime updatedAt;
 
   CitizenProfile({
-    required this.id,
+    this.id, // Made optional
     required this.userId,
     this.nik,
     this.whatsappKeluarga,
@@ -44,8 +44,9 @@ class CitizenProfile {
   });
 
   factory CitizenProfile.fromJson(Map<String, dynamic> json) {
+    print('📋 Parsing CitizenProfile from JSON: $json');
     return CitizenProfile(
-      id: json['id'] as int,
+      id: json['id'] != null ? int.tryParse(json['id'].toString()) : null,
       userId: json['user_id']?.toString() ?? '',
       nik: json['nik']?.toString(),
       whatsappKeluarga: json['whatsapp_keluarga']?.toString(),

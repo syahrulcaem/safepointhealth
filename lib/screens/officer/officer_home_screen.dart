@@ -4,7 +4,6 @@ import '../../providers/auth_provider.dart';
 import '../../providers/emergency_provider.dart';
 import '../../providers/location_provider.dart';
 import '../../config/app_theme.dart';
-import '../../models/emergency_case_new.dart';
 import '../auth/login_screen.dart';
 
 class OfficerHomeScreen extends StatefulWidget {
