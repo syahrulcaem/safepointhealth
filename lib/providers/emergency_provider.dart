@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/emergency_case_new.dart';
 import '../config/api_config.dart';
 import '../services/auth_service.dart';
+import '../services/emergency_cooldown_service.dart';
 
 class EmergencyProvider with ChangeNotifier {
   List<EmergencyCase> _cases = [];
@@ -14,6 +15,7 @@ class EmergencyProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   bool _isReporting = false;
+  DateTime? _lastEmergencyTime;
 
   // Getters
   List<EmergencyCase> get cases => _cases;
@@ -22,6 +24,24 @@ class EmergencyProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get isReporting => _isReporting;
+  DateTime? get lastEmergencyTime => _lastEmergencyTime;
+
+  // Check if user can report emergency (30 minutes cooldown)
+  bool canReportEmergency() {
+    if (_lastEmergencyTime == null) return true;
+    final now = DateTime.now();
+    final difference = now.difference(_lastEmergencyTime!);
+    return difference.inMinutes >= 30;
+  }
+
+  // Get remaining cooldown time in minutes
+  int getRemainingCooldownMinutes() {
+    if (_lastEmergencyTime == null) return 0;
+    final now = DateTime.now();
+    final difference = now.difference(_lastEmergencyTime!);
+    final remaining = 30 - difference.inMinutes;
+    return remaining > 0 ? remaining : 0;
+  }
 
   // Report emergency
   Future<bool> reportEmergency({
@@ -111,6 +131,101 @@ class EmergencyProvider with ChangeNotifier {
         _setReporting(false);
         notifyListeners();
         return true;
+      } else {
+        _setError(responseData['message'] ?? 'Failed to report emergency');
+        _setReporting(false);
+        return false;
+      }
+    } catch (e) {
+      _setError('Network error: ${e.toString()}');
+      _setReporting(false);
+      return false;
+    }
+  }
+
+  // Report emergency anonymously (public endpoint, no authentication)
+  Future<bool> reportPublicEmergency({
+    required double latitude,
+    required double longitude,
+    required EmergencyCategory category,
+    required String description,
+    String? phone,
+    double? accuracy,
+  }) async {
+    _setReporting(true);
+    _clearError();
+
+    try {
+      // Check cooldown using persistent storage
+      final canReport = await EmergencyCooldownService.canReportEmergency();
+      if (!canReport) {
+        final remaining =
+            await EmergencyCooldownService.getRemainingCooldownMinutes();
+        _setError(
+            'Please wait $remaining minutes before reporting another emergency');
+        _setReporting(false);
+        return false;
+      }
+
+      // Prepare request data for public endpoint
+      Map<String, dynamic> requestData = {
+        'latitude': latitude,
+        'longitude': longitude,
+        'category': category.toString().split('.').last,
+        'description': description,
+        'website': '', // Honeypot field for bot detection
+      };
+
+      // Optional fields
+      if (phone != null && phone.isNotEmpty && phone != 'guest-emergency') {
+        requestData['phone'] = phone;
+      }
+      if (accuracy != null) {
+        requestData['accuracy'] = accuracy.toInt();
+      }
+
+      // Debug: Print request data
+      print('=== Public Emergency Report Request ===');
+      print('URL: ${ApiConfig.baseUrl}/public/emergency');
+      print('Body: ${jsonEncode(requestData)}');
+      print('=======================================');
+
+      final response = await http
+          .post(
+        Uri.parse('${ApiConfig.baseUrl}/public/emergency'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(requestData),
+      )
+          .timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw Exception(
+              'Request timeout - server tidak merespon dalam 15 detik');
+        },
+      );
+
+      // Debug: Print response
+      print('=== Public Emergency Report Response ===');
+      print('Status Code: ${response.statusCode}');
+      print('Body: ${response.body}');
+      print('========================================');
+
+      final Map<String, dynamic> responseData = jsonDecode(response.body);
+
+      if (response.statusCode == 201 && responseData['success'] == true) {
+        // Set last emergency time for cooldown (persistent)
+        await EmergencyCooldownService.saveLastEmergencyTime();
+        _lastEmergencyTime = DateTime.now();
+        _setReporting(false);
+        notifyListeners();
+        return true;
+      } else if (response.statusCode == 429) {
+        _setError('Too many attempts. Please wait a moment and try again.');
+        _setReporting(false);
+        return false;
       } else {
         _setError(responseData['message'] ?? 'Failed to report emergency');
         _setReporting(false);

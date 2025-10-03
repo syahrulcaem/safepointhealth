@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../models/emergency_case_new.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/emergency_provider.dart';
+import '../../services/emergency_cooldown_service.dart';
 import '../../widgets/emergency_category_dialog.dart';
 import '../auth/login_screen.dart';
 
@@ -137,11 +138,14 @@ class _HomeTabState extends State<_HomeTab> {
   bool _disposed = false;
   double? _currentLatitude;
   double? _currentLongitude;
+  bool _canReportEmergency = true;
+  int _remainingCooldownSeconds = 0;
 
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
+    _checkCooldownStatus();
   }
 
   Future<void> _getCurrentLocation() async {
@@ -150,6 +154,41 @@ class _HomeTabState extends State<_HomeTab> {
     setState(() {
       _currentLatitude = -6.2088;
       _currentLongitude = 106.8456;
+    });
+  }
+
+  Future<void> _checkCooldownStatus() async {
+    final canReport = await EmergencyCooldownService.canReportEmergency();
+    final remaining =
+        await EmergencyCooldownService.getRemainingCooldownSeconds();
+
+    if (mounted) {
+      setState(() {
+        _canReportEmergency = canReport;
+        _remainingCooldownSeconds = remaining;
+      });
+
+      // If in cooldown, start countdown timer
+      if (!canReport && remaining > 0) {
+        _startCooldownTimer();
+      }
+    }
+  }
+
+  void _startCooldownTimer() {
+    Future.delayed(const Duration(seconds: 1), () async {
+      if (!mounted || _disposed) return;
+
+      final remaining =
+          await EmergencyCooldownService.getRemainingCooldownSeconds();
+      setState(() {
+        _remainingCooldownSeconds = remaining;
+        _canReportEmergency = remaining <= 0;
+      });
+
+      if (remaining > 0) {
+        _startCooldownTimer();
+      }
     });
   }
 
@@ -256,30 +295,40 @@ class _HomeTabState extends State<_HomeTab> {
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(150),
-                      onTap: () => _showCategoryDialog(context),
-                      child: const Center(
+                      onTap: _canReportEmergency
+                          ? () => _showCategoryDialog(context)
+                          : null,
+                      child: Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.emergency,
+                              _canReportEmergency
+                                  ? Icons.emergency
+                                  : Icons.access_time,
                               size: 80,
-                              color: Colors.white,
+                              color: _canReportEmergency
+                                  ? Colors.white
+                                  : Colors.white70,
                             ),
-                            SizedBox(height: 16),
+                            const SizedBox(height: 16),
                             Text(
-                              'SOS',
+                              _canReportEmergency ? 'SOS' : 'WAIT',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: _canReportEmergency
+                                    ? Colors.white
+                                    : Colors.white70,
                                 fontSize: 32,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 4,
                               ),
                             ),
-                            SizedBox(height: 8),
+                            const SizedBox(height: 8),
                             Text(
-                              'Tekan untuk bantuan darurat',
-                              style: TextStyle(
+                              _canReportEmergency
+                                  ? 'Tekan untuk bantuan darurat'
+                                  : 'Cooldown: ${EmergencyCooldownService.formatRemainingTime(_remainingCooldownSeconds)}',
+                              style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 14,
                               ),
@@ -374,7 +423,40 @@ class _HomeTabState extends State<_HomeTab> {
       final user = authProvider.user;
       final isGuest = !authProvider.isAuthenticated || user == null;
 
-      // Check GPS location first
+      // Check cooldown first
+      final canReport = await EmergencyCooldownService.canReportEmergency();
+      if (!canReport) {
+        // Close loading dialog
+        if (mounted) Navigator.pop(context);
+
+        final remaining =
+            await EmergencyCooldownService.getRemainingCooldownMinutes();
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.access_time, color: Colors.orange),
+                  SizedBox(width: 8),
+                  Text('Cooldown Active'),
+                ],
+              ),
+              content: Text(
+                  'Please wait $remaining minutes before reporting another emergency.\n\nThis cooldown helps prevent accidental multiple reports.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+
+      // Check GPS location
       if (_currentLatitude == null || _currentLongitude == null) {
         // Close loading dialog
         if (mounted) Navigator.pop(context);
@@ -404,27 +486,25 @@ class _HomeTabState extends State<_HomeTab> {
         return;
       }
 
-      // For guest users, use default phone number or allow emergency without phone
-      String phoneNumber;
-      if (isGuest) {
-        phoneNumber =
-            'guest-emergency'; // Special identifier for guest emergencies
-      } else {
-        phoneNumber = user.phone ?? 'no-phone';
-      }
-
-      final success = await emergencyProvider.reportEmergency(
-        phone: phoneNumber,
+      // Use public emergency endpoint (no authentication required)
+      final success = await emergencyProvider.reportPublicEmergency(
         latitude: _currentLatitude!,
         longitude: _currentLongitude!,
         category: category,
         description: isGuest
             ? 'Emergency reported by guest user from mobile app'
             : 'Emergency reported from mobile app',
+        phone: isGuest ? null : user.phone,
+        accuracy: 10.0,
       );
 
       // Close loading dialog
       if (mounted) Navigator.pop(context);
+
+      // Refresh cooldown status after successful report
+      if (success) {
+        await _checkCooldownStatus();
+      }
 
       // Show result dialog
       if (mounted) {
@@ -440,8 +520,8 @@ class _HomeTabState extends State<_HomeTab> {
                 ],
               ),
               content: Text(isGuest
-                  ? 'Emergency report sent successfully!\n\nFor better emergency response, consider creating an account to provide contact information.'
-                  : 'Emergency report sent successfully!'),
+                  ? 'Emergency report sent successfully!\n\n⏱️ 30-minute cooldown activated\n\nFor better emergency response, consider creating an account to provide contact information.'
+                  : 'Emergency report sent successfully!\n\n⏱️ 30-minute cooldown activated'),
               actions: [
                 if (isGuest) ...[
                   TextButton(
