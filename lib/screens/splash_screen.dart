@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../config/app_theme.dart';
 import '../models/user.dart';
+import '../services/bluetooth_service.dart';
 import 'citizen/citizen_home_screen.dart';
 import 'officer/officer_dashboard_screen.dart';
 
@@ -29,8 +30,32 @@ class _SplashScreenState extends State<SplashScreen> {
     // Initialize authentication (but don't require login)
     await authProvider.initializeAuth();
 
+    // Request Bluetooth permission (Android 12+)
+    await _requestBluetoothPermission();
+
     if (mounted) {
       _navigateToNextScreen();
+    }
+  }
+
+  Future<void> _requestBluetoothPermission() async {
+    try {
+      final hasPermission = await BluetoothService.hasBluetoothPermission();
+
+      if (!hasPermission) {
+        print('Requesting Bluetooth permission...');
+        final granted = await BluetoothService.requestBluetoothPermission();
+
+        if (granted) {
+          print('✅ Bluetooth permission granted');
+        } else {
+          print('❌ Bluetooth permission denied');
+        }
+      } else {
+        print('✅ Bluetooth permission already granted');
+      }
+    } catch (e) {
+      print('Error requesting Bluetooth permission: $e');
     }
   }
 

@@ -5,6 +5,8 @@ import '../../providers/auth_provider.dart';
 import '../../providers/emergency_provider.dart';
 import '../../services/emergency_cooldown_service.dart';
 import '../../services/gps_service.dart';
+import '../../services/bluetooth_service.dart';
+import '../../services/smartwatch_sos_service.dart';
 import '../../widgets/emergency_category_dialog.dart';
 import '../auth/login_screen.dart';
 import 'edit_profile_screen.dart';
@@ -20,10 +22,17 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
   int _selectedIndex = 0;
   bool _isInitialized = false;
 
+  // Bluetooth & SmartWatch status
+  bool _isBluetoothEnabled = false;
+  bool _isXiaomiWatchConnected = false;
+  String _watchName = '';
+  bool _hasBluetoothPermission = false;
+
   @override
   void initState() {
     super.initState();
     _initializeData();
+    _initializeBluetoothAndSmartWatch();
   }
 
   Future<void> _initializeData() async {
@@ -41,6 +50,285 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
         setState(() {
           _isInitialized = true;
         });
+      }
+    }
+  }
+
+  Future<void> _initializeBluetoothAndSmartWatch() async {
+    // Initialize SmartWatch SOS listener
+    SmartWatchSosService.initialize(
+      onSosTrigger: (data) async {
+        print('🚨 SmartWatch SOS Trigger Received in UI!');
+
+        // Langsung kirim SOS tanpa konfirmasi
+        if (mounted) {
+          await _triggerEmergencyFromSmartWatch(data);
+        }
+      },
+    );
+
+    // Check Bluetooth status
+    await _checkBluetoothStatus();
+  }
+
+  Future<void> _checkBluetoothStatus() async {
+    try {
+      final status = await BluetoothService.getBluetoothStatus();
+
+      if (mounted) {
+        setState(() {
+          _hasBluetoothPermission = status['hasPermission'] ?? false;
+          _isBluetoothEnabled = status['isEnabled'] ?? false;
+          _isXiaomiWatchConnected = status['watchConnected'] ?? false;
+          _watchName = status['watchName'] ?? '';
+        });
+      }
+
+      print('Bluetooth Status:');
+      print('- Permission: $_hasBluetoothPermission');
+      print('- Enabled: $_isBluetoothEnabled');
+      print('- Watch Connected: $_isXiaomiWatchConnected');
+      print('- Watch Name: $_watchName');
+    } catch (e) {
+      print('Error checking Bluetooth status: $e');
+    }
+  }
+
+  void _showSosAlertOverlay(String watchName) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.red.withOpacity(0.9),
+      builder: (context) => WillPopScope(
+        onWillPop: () async => false,
+        child: Material(
+          color: Colors.transparent,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Pulsing SOS Icon
+                TweenAnimationBuilder(
+                  tween: Tween<double>(begin: 0.8, end: 1.2),
+                  duration: const Duration(milliseconds: 500),
+                  curve: Curves.easeInOut,
+                  builder: (context, double scale, child) {
+                    return Transform.scale(
+                      scale: scale,
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.white.withOpacity(0.5),
+                              blurRadius: 30,
+                              spreadRadius: 10,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.emergency,
+                          size: 60,
+                          color: Colors.red,
+                        ),
+                      ),
+                    );
+                  },
+                  onEnd: () {
+                    // Loop animation - trigger rebuild
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  },
+                ),
+                const SizedBox(height: 32),
+                const Text(
+                  'SOS DARURAT',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.watch, color: Colors.white, size: 24),
+                      const SizedBox(width: 12),
+                      Text(
+                        watchName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                const CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 3,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Mengirim laporan darurat...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _triggerEmergencyFromSmartWatch(
+      Map<String, dynamic> data) async {
+    try {
+      final emergencyProvider =
+          Provider.of<EmergencyProvider>(context, listen: false);
+
+      final watchName = data['device'] ?? 'SmartWatch';
+
+      // Show fullscreen SOS alert
+      if (mounted) {
+        _showSosAlertOverlay(watchName);
+      }
+
+      // Trigger emergency report immediately
+      final success = await SmartWatchSosService.triggerEmergencyReport(
+        emergencyProvider: emergencyProvider,
+        description: 'SOS darurat dari smartwatch: $watchName',
+        category: EmergencyCategory.KECELAKAAN,
+      );
+
+      // Close overlay
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      // Wait a moment before showing result
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (mounted) {
+        if (success) {
+          // Show success with fullscreen green
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            barrierColor: Colors.green.withOpacity(0.9),
+            builder: (context) => WillPopScope(
+              onWillPop: () async => false,
+              child: Material(
+                color: Colors.transparent,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.white.withOpacity(0.5),
+                              blurRadius: 30,
+                              spreadRadius: 10,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.check_circle,
+                          size: 60,
+                          color: Colors.green,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      const Text(
+                        'SOS TERKIRIM!',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 36,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 4,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Tim darurat akan segera datang',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+
+          // Auto close after 3 seconds
+          await Future.delayed(const Duration(seconds: 3));
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+          }
+        } else {
+          // Show error
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(emergencyProvider.errorMessage ??
+                        '❌ Gagal mengirim SOS'),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error triggering emergency from smartwatch: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('❌ Error: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
       }
     }
   }
@@ -145,11 +433,33 @@ class _HomeTabState extends State<_HomeTab> {
   bool _isLoadingLocation = true;
   String? _locationError;
 
+  // Bluetooth & SmartWatch status
+  bool _isBluetoothEnabled = false;
+  bool _isXiaomiWatchConnected = false;
+  String _watchName = '';
+
   @override
   void initState() {
     super.initState();
     _initializeLocation();
     _checkCooldownStatus();
+    _checkBluetoothStatus();
+  }
+
+  Future<void> _checkBluetoothStatus() async {
+    try {
+      final status = await BluetoothService.getBluetoothStatus();
+
+      if (mounted) {
+        setState(() {
+          _isBluetoothEnabled = status['isEnabled'] ?? false;
+          _isXiaomiWatchConnected = status['watchConnected'] ?? false;
+          _watchName = status['watchName'] ?? '';
+        });
+      }
+    } catch (e) {
+      print('Error checking Bluetooth status: $e');
+    }
   }
 
   Future<void> _initializeLocation() async {
@@ -403,7 +713,12 @@ class _HomeTabState extends State<_HomeTab> {
               ),
             ),
 
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
+
+            // Bluetooth & SmartWatch Status Indicator
+            _buildBluetoothStatusCard(),
+
+            const SizedBox(height: 20),
 
             // Main SOS Button
             Expanded(
@@ -518,6 +833,151 @@ class _HomeTabState extends State<_HomeTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBluetoothStatusCard() {
+    if (!_isBluetoothEnabled) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.bluetooth_disabled,
+                color: Colors.grey.shade600, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bluetooth Mati',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade700,
+                      fontSize: 14,
+                    ),
+                  ),
+                  Text(
+                    'Aktifkan untuk menghubungkan smartwatch',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isXiaomiWatchConnected) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.green.shade50, Colors.green.shade100],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.green.shade300),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.watch, color: Colors.green.shade700, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'SmartWatch Terhubung',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green.shade900,
+                      fontSize: 14,
+                    ),
+                  ),
+                  Text(
+                    _watchName.isNotEmpty ? _watchName : 'Xiaomi Watch',
+                    style: TextStyle(
+                      color: Colors.green.shade700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.green.shade700,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'SOS Ready',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Bluetooth enabled but no watch connected
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.bluetooth_searching,
+              color: Colors.blue.shade700, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Bluetooth Aktif',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade900,
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  'Menunggu koneksi Xiaomi Watch',
+                  style: TextStyle(
+                    color: Colors.blue.shade700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            color: Colors.blue.shade700,
+            onPressed: _checkBluetoothStatus,
+          ),
+        ],
       ),
     );
   }

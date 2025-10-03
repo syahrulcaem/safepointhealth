@@ -59,6 +59,17 @@ class EmergencyProvider with ChangeNotifier {
     _clearError();
 
     try {
+      // Check cooldown for authenticated users
+      final canReport = await EmergencyCooldownService.canReportEmergency();
+      if (!canReport) {
+        final remainingMinutes =
+            await EmergencyCooldownService.getRemainingCooldownMinutes();
+        _setError(
+            'Anda baru saja mengirimkan laporan darurat. Harap tunggu $remainingMinutes menit lagi sebelum mengirim laporan berikutnya.');
+        _setReporting(false);
+        return false;
+      }
+
       final token = await AuthService.getToken();
       if (token == null) {
         _setError('Authentication required');
@@ -125,6 +136,10 @@ class EmergencyProvider with ChangeNotifier {
       final Map<String, dynamic> responseData = jsonDecode(response.body);
 
       if (response.statusCode == 201 && responseData['success'] == true) {
+        // Set last emergency time for cooldown (persistent)
+        await EmergencyCooldownService.saveLastEmergencyTime();
+        _lastEmergencyTime = DateTime.now();
+
         final emergencyCase = EmergencyCase.fromJson(responseData['data']);
         _activeCase = emergencyCase;
         _myCases.insert(0, emergencyCase);
