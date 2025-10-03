@@ -52,7 +52,7 @@ class SmartWatchSosService {
 
       final lat = location['latitude'] ?? 0.0;
       final lon = location['longitude'] ?? 0.0;
-      
+
       print('✅ Location: $lat, $lon');
 
       // Check if user is logged in
@@ -109,7 +109,7 @@ class SmartWatchSosService {
 
       final lat = location['latitude'] ?? 0.0;
       final lon = location['longitude'] ?? 0.0;
-      
+
       // Call appropriate emergency report method
       if (isGuest) {
         return await emergencyProvider.reportPublicEmergency(
