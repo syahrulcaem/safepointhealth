@@ -170,18 +170,22 @@ class _HomeTabState extends State<_HomeTab> {
             // Header
             Consumer<AuthProvider>(
               builder: (context, authProvider, child) {
+                final isGuest =
+                    !authProvider.isAuthenticated || authProvider.user == null;
+
                 return Row(
                   children: [
                     CircleAvatar(
                       radius: 24,
                       backgroundColor: const Color(0xFFE53E3E),
                       child: Text(
-                        (authProvider.user?.name != null &&
-                                authProvider.user!.name.isNotEmpty)
-                            ? authProvider.user!.name
-                                .substring(0, 1)
-                                .toUpperCase()
-                            : 'U',
+                        isGuest
+                            ? 'G'
+                            : (authProvider.user!.name.isNotEmpty
+                                ? authProvider.user!.name
+                                    .substring(0, 1)
+                                    .toUpperCase()
+                                : 'U'),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -194,7 +198,9 @@ class _HomeTabState extends State<_HomeTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Hello, ${authProvider.user?.name ?? 'User'}',
+                            isGuest
+                                ? 'Hello, Guest'
+                                : 'Hello, ${authProvider.user?.name ?? 'User'}',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -366,35 +372,9 @@ class _HomeTabState extends State<_HomeTab> {
           Provider.of<EmergencyProvider>(context, listen: false);
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       final user = authProvider.user;
+      final isGuest = !authProvider.isAuthenticated || user == null;
 
-      if (user == null) {
-        // Close loading dialog
-        if (mounted) Navigator.pop(context);
-
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.error, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('Authentication Error'),
-                ],
-              ),
-              content: const Text('Please login to report emergency.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-          );
-        }
-        return;
-      }
-
+      // Check GPS location first
       if (_currentLatitude == null || _currentLongitude == null) {
         // Close loading dialog
         if (mounted) Navigator.pop(context);
@@ -424,12 +404,23 @@ class _HomeTabState extends State<_HomeTab> {
         return;
       }
 
+      // For guest users, use default phone number or allow emergency without phone
+      String phoneNumber;
+      if (isGuest) {
+        phoneNumber =
+            'guest-emergency'; // Special identifier for guest emergencies
+      } else {
+        phoneNumber = user.phone ?? 'no-phone';
+      }
+
       final success = await emergencyProvider.reportEmergency(
-        phone: user.phone ?? '',
+        phone: phoneNumber,
         latitude: _currentLatitude!,
         longitude: _currentLongitude!,
         category: category,
-        description: 'Emergency reported from mobile app',
+        description: isGuest
+            ? 'Emergency reported by guest user from mobile app'
+            : 'Emergency reported from mobile app',
       );
 
       // Close loading dialog
@@ -448,8 +439,24 @@ class _HomeTabState extends State<_HomeTab> {
                   Text('Success'),
                 ],
               ),
-              content: const Text('Emergency report sent successfully'),
+              content: Text(isGuest
+                  ? 'Emergency report sent successfully!\n\nFor better emergency response, consider creating an account to provide contact information.'
+                  : 'Emergency report sent successfully!'),
               actions: [
+                if (isGuest) ...[
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                      );
+                    },
+                    child: const Text('Create Account'),
+                  ),
+                ],
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('OK'),
@@ -550,6 +557,9 @@ class _ProfileTab extends StatelessWidget {
           children: [
             Consumer<AuthProvider>(
               builder: (context, authProvider, child) {
+                final isGuest =
+                    !authProvider.isAuthenticated || authProvider.user == null;
+
                 return Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(24),
@@ -563,12 +573,13 @@ class _ProfileTab extends StatelessWidget {
                         radius: 40,
                         backgroundColor: Colors.white,
                         child: Text(
-                          (authProvider.user?.name != null &&
-                                  authProvider.user!.name.isNotEmpty)
-                              ? authProvider.user!.name
-                                  .substring(0, 1)
-                                  .toUpperCase()
-                              : 'U',
+                          isGuest
+                              ? 'G'
+                              : (authProvider.user!.name.isNotEmpty
+                                  ? authProvider.user!.name
+                                      .substring(0, 1)
+                                      .toUpperCase()
+                                  : 'U'),
                           style: const TextStyle(
                             color: Color(0xFFE53E3E),
                             fontSize: 32,
@@ -578,7 +589,9 @@ class _ProfileTab extends StatelessWidget {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        authProvider.user?.name ?? 'User Name',
+                        isGuest
+                            ? 'Guest User'
+                            : (authProvider.user?.name ?? 'User Name'),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 20,
@@ -587,7 +600,9 @@ class _ProfileTab extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        authProvider.user?.email ?? 'user@email.com',
+                        isGuest
+                            ? 'Login to access full features'
+                            : (authProvider.user?.email ?? 'user@email.com'),
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 14,
@@ -603,9 +618,9 @@ class _ProfileTab extends StatelessWidget {
                           color: Colors.white.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Text(
-                          'CITIZEN',
-                          style: TextStyle(
+                        child: Text(
+                          isGuest ? 'GUEST' : 'CITIZEN',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -618,76 +633,220 @@ class _ProfileTab extends StatelessWidget {
               },
             ),
             const SizedBox(height: 24),
-            ListTile(
-              leading: const Icon(Icons.edit, color: Color(0xFFE53E3E)),
-              title: const Text('Edit Profile'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {},
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.settings, color: Color(0xFFE53E3E)),
-              title: const Text('Settings'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {},
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.help, color: Color(0xFFE53E3E)),
-              title: const Text('Help & Support'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {},
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  final shouldLogout = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Logout'),
-                      content: const Text('Are you sure you want to logout?'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel'),
+
+            // Conditional content based on authentication status
+            Consumer<AuthProvider>(
+              builder: (context, authProvider, child) {
+                final isGuest =
+                    !authProvider.isAuthenticated || authProvider.user == null;
+
+                if (isGuest) {
+                  // Guest mode - show login/register options
+                  return Expanded(
+                    child: Column(
+                      children: [
+                        const Icon(
+                          Icons.person_outline,
+                          size: 80,
+                          color: Colors.grey,
                         ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.red,
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Join SafePoint Community',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
                           ),
-                          child: const Text('Logout'),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Login or register to access advanced features like emergency history, profile management, and more.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+
+                        // Login Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const LoginScreen(),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.login),
+                            label: const Text('Login'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFE53E3E),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // Register Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const LoginScreen(), // TODO: Create RegisterScreen
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.person_add),
+                            label: const Text('Register'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFE53E3E),
+                              side: const BorderSide(color: Color(0xFFE53E3E)),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const Spacer(),
+
+                        // Continue as Guest info
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Colors.grey.shade600,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'You can still use emergency SOS features as a guest',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   );
-
-                  if (shouldLogout == true && context.mounted) {
-                    final authProvider =
-                        Provider.of<AuthProvider>(context, listen: false);
-                    await authProvider.logout();
-
-                    if (context.mounted) {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const LoginScreen(),
+                } else {
+                  // Logged in mode - show profile options
+                  return Expanded(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading:
+                              const Icon(Icons.edit, color: Color(0xFFE53E3E)),
+                          title: const Text('Edit Profile'),
+                          trailing:
+                              const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {},
                         ),
-                        (route) => false,
-                      );
-                    }
-                  }
-                },
-                icon: const Icon(Icons.logout),
-                label: const Text('Logout'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
+                        const Divider(),
+                        ListTile(
+                          leading: const Icon(Icons.history,
+                              color: Color(0xFFE53E3E)),
+                          title: const Text('Emergency History'),
+                          trailing:
+                              const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {},
+                        ),
+                        const Divider(),
+                        ListTile(
+                          leading: const Icon(Icons.settings,
+                              color: Color(0xFFE53E3E)),
+                          title: const Text('Settings'),
+                          trailing:
+                              const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {},
+                        ),
+                        const Divider(),
+                        ListTile(
+                          leading:
+                              const Icon(Icons.help, color: Color(0xFFE53E3E)),
+                          title: const Text('Help & Support'),
+                          trailing:
+                              const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {},
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              final shouldLogout = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Logout'),
+                                  content: const Text(
+                                      'Are you sure you want to logout?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.red,
+                                      ),
+                                      child: const Text('Logout'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (shouldLogout == true && context.mounted) {
+                                final authProvider = Provider.of<AuthProvider>(
+                                    context,
+                                    listen: false);
+                                await authProvider.logout();
+
+                                // Stay on citizen home screen (guest mode)
+                                // No navigation needed as we'll rebuild with guest UI
+                              }
+                            },
+                            icon: const Icon(Icons.logout),
+                            label: const Text('Logout'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+              },
             ),
           ],
         ),

@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../config/app_theme.dart';
 import '../models/user.dart';
-import 'auth/login_screen.dart';
 import 'citizen/citizen_home_screen.dart';
 import 'officer/officer_dashboard_screen.dart';
 
@@ -27,7 +26,7 @@ class _SplashScreenState extends State<SplashScreen> {
     // Add delay for splash screen effect
     await Future.delayed(const Duration(seconds: 2));
 
-    // Initialize authentication
+    // Initialize authentication (but don't require login)
     await authProvider.initializeAuth();
 
     if (mounted) {
@@ -38,26 +37,19 @@ class _SplashScreenState extends State<SplashScreen> {
   void _navigateToNextScreen() {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
-    if (authProvider.isAuthenticated && authProvider.user != null) {
-      // Navigate based on user role
-      if (authProvider.user?.role == UserRole.PETUGAS) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-              builder: (context) => const OfficerDashboardScreen()),
-        );
-      } else {
-        // Default to citizen home for WARGA role
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
-        );
-      }
-    } else {
-      // Not authenticated, go to login screen
+    // Check if user is logged in as petugas
+    if (authProvider.isAuthenticated &&
+        authProvider.user != null &&
+        authProvider.user?.role == UserRole.PETUGAS) {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        MaterialPageRoute(builder: (context) => const OfficerDashboardScreen()),
+      );
+    } else {
+      // Default to citizen home (guest mode or citizen)
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
       );
     }
   }
