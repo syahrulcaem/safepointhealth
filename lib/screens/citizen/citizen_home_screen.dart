@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:safepointhealth/models/my_case.dart';
+import 'package:safepointhealth/services/my_cases_service.dart';
+import '../../config/app_theme.dart';
 import '../../models/emergency_case_new.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/emergency_provider.dart';
@@ -10,6 +15,7 @@ import '../../services/smartwatch_sos_service.dart';
 import '../../widgets/emergency_category_dialog.dart';
 import '../auth/login_screen.dart';
 import 'edit_profile_screen.dart';
+import 'case_detail_screen.dart';
 
 class CitizenHomeScreen extends StatefulWidget {
   const CitizenHomeScreen({super.key});
@@ -356,7 +362,7 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
                   color: Colors.white,
                   strokeWidth: 3,
                 ),
-                SizedBox(height: 24),
+                SizedBox(height: 18),
                 Text(
                   'SafePoint Health',
                   style: TextStyle(
@@ -756,25 +762,16 @@ class _HomeTabState extends State<_HomeTab> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              _canReportEmergency
-                                  ? Icons.emergency
-                                  : Icons.access_time,
-                              size: 80,
-                              color: _canReportEmergency
-                                  ? Colors.white
-                                  : Colors.white70,
-                            ),
-                            const SizedBox(height: 16),
+                            // SOS Text - Large and bold
                             Text(
                               _canReportEmergency ? 'SOS' : 'WAIT',
                               style: TextStyle(
                                 color: _canReportEmergency
                                     ? Colors.white
                                     : Colors.white70,
-                                fontSize: 32,
+                                fontSize: 72,
                                 fontWeight: FontWeight.bold,
-                                letterSpacing: 4,
+                                letterSpacing: 8,
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -1217,33 +1214,423 @@ class _HomeTabState extends State<_HomeTab> {
   }
 }
 
-class _CasesTab extends StatelessWidget {
+class _CasesTab extends StatefulWidget {
   const _CasesTab();
 
   @override
+  State<_CasesTab> createState() => _CasesTabState();
+}
+
+class _CasesTabState extends State<_CasesTab> {
+  MyCasesResponse? _casesData;
+  bool _isLoading = true;
+  String? _errorMessage;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCases();
+    // Auto refresh every 10 seconds untuk real-time updates
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadCases(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadCases({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+
+    try {
+      final response = await MyCasesService.getMyCases();
+
+      if (mounted) {
+        setState(() {
+          _casesData = response;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Color _getStatusColor(EmergencyStatus status) {
+    switch (status) {
+      case EmergencyStatus.PENDING:
+      case EmergencyStatus.NEW:
+        return Colors.orange;
+      case EmergencyStatus.DISPATCHED:
+      case EmergencyStatus.ON_THE_WAY:
+        return Colors.blue;
+      case EmergencyStatus.ON_SCENE:
+        return Colors.purple;
+      case EmergencyStatus.RESOLVED:
+        return Colors.green;
+      case EmergencyStatus.CANCELLED:
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getStatusText(EmergencyStatus status) {
+    switch (status) {
+      case EmergencyStatus.PENDING:
+        return 'Menunggu';
+      case EmergencyStatus.NEW:
+        return 'Baru';
+      case EmergencyStatus.VERIFIED:
+        return 'Terverifikasi';
+      case EmergencyStatus.DISPATCHED:
+        return 'Dikirim';
+      case EmergencyStatus.ON_THE_WAY:
+        return 'Dalam Perjalanan';
+      case EmergencyStatus.ON_SCENE:
+        return 'Di Lokasi';
+      case EmergencyStatus.RESOLVED:
+        return 'Selesai';
+      case EmergencyStatus.CANCELLED:
+        return 'Dibatalkan';
+      default:
+        return status.toString();
+    }
+  }
+
+  String _getCategoryText(EmergencyCategory category) {
+    switch (category) {
+      case EmergencyCategory.MEDIS:
+        return 'Medis';
+      case EmergencyCategory.UMUM:
+        return 'Umum';
+      case EmergencyCategory.KECELAKAAN:
+        return 'Kecelakaan';
+      case EmergencyCategory.KEBOCORAN_GAS:
+        return 'Kebocoran Gas';
+      case EmergencyCategory.BENCANA_ALAM:
+        return 'Bencana Alam';
+      case EmergencyCategory.SAKIT:
+        return 'Sakit';
+      case EmergencyCategory.POHON_TUMBANG:
+        return 'Pohon Tumbang';
+      case EmergencyCategory.BANJIR:
+        return 'Banjir';
+      default:
+        return category.toString();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.assignment_outlined, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text(
-            'My Cases',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              'Error loading cases',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _errorMessage!,
+              style: const TextStyle(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadCases,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final cases = _casesData?.cases.data ?? [];
+
+    if (cases.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.assignment_outlined, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text(
+              'No Cases Yet',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Your emergency reports will appear here',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadCases,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // AppBar/Header
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryRed,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                spreadRadius: 1,
+                blurRadius: 6,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'My Cases',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  onPressed: _loadCases,
+                  tooltip: 'Refresh',
+                  iconSize: 28,
+                ),
+              ],
             ),
           ),
-          SizedBox(height: 8),
-          Text(
-            'Your emergency reports will appear here',
-            style: TextStyle(color: Colors.grey),
+        ),
+        // Cases List
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _loadCases(),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: cases.length,
+              itemBuilder: (context, index) {
+                final caseItem = cases[index];
+                final statusColor = _getStatusColor(caseItem.status);
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              CaseDetailScreen(caseItem: caseItem),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Header: Case ID dan Status
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '#${caseItem.shortId}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: statusColor.withOpacity(0.5),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Text(
+                                  _getStatusText(caseItem.status),
+                                  style: TextStyle(
+                                    color: statusColor,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Category
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.category_outlined,
+                                size: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _getCategoryText(caseItem.category),
+                                style: TextStyle(
+                                  color: Colors.grey.shade700,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Location
+                          if (caseItem.location != null) ...[
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  size: 16,
+                                  color: Colors.grey.shade600,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    caseItem.location!,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade700,
+                                      fontSize: 13,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+
+                          // Timestamp
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.access_time,
+                                size: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _formatDateTime(caseItem.createdAt),
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          // Assigned Unit (jika ada)
+                          if (caseItem.assignedUnit != null) ...[
+                            const SizedBox(height: 12),
+                            const Divider(),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.local_fire_department,
+                                  size: 16,
+                                  color: Colors.blue,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    caseItem.assignedUnit!.name,
+                                    style: const TextStyle(
+                                      color: Colors.blue,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inHours < 1) {
+      return '${difference.inMinutes} minutes ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours} hours ago';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} days ago';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
   }
 }
 

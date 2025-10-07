@@ -38,17 +38,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (success && mounted) {
         // Navigate based on user role
+        // Use pushAndRemoveUntil to prevent back navigation to login screen
         if (authProvider.user?.role == UserRole.PETUGAS) {
-          Navigator.pushReplacement(
+          Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
                 builder: (context) => const OfficerDashboardScreen()),
+            (route) => false, // Remove all previous routes
           );
         } else {
           // Default to citizen home for WARGA role
-          Navigator.pushReplacement(
+          Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
+            (route) => false, // Remove all previous routes
           );
         }
       } else if (mounted && authProvider.errorMessage != null) {
@@ -281,66 +284,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
 
               const SizedBox(height: 32),
-
-              // Emergency Access
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.warning_amber_rounded,
-                            color: AppTheme.warningYellow,
-                            size: 24,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Emergency Access',
-                                  style: AppTheme.heading3,
-                                ),
-                                Text(
-                                  'Need help immediately? Use emergency mode',
-                                  style: AppTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            // TODO: Implement emergency mode
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Emergency mode coming soon'),
-                                backgroundColor: AppTheme.warningYellow,
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.emergency),
-                          label: const Text('Emergency Mode'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppTheme.warningYellow,
-                            side: const BorderSide(
-                              color: AppTheme.warningYellow,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ],
           ),
         ),

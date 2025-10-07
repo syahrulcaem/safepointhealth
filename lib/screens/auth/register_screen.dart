@@ -4,7 +4,6 @@ import '../../providers/auth_provider.dart';
 import '../../config/app_theme.dart';
 import '../../models/user.dart';
 import '../citizen/citizen_home_screen.dart';
-import '../officer/officer_home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({Key? key}) : super(key: key);
@@ -23,7 +22,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
-  UserRole _selectedRole = UserRole.WARGA;
 
   @override
   void dispose() {
@@ -45,22 +43,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         phone: _phoneController.text.trim(),
         password: _passwordController.text,
         passwordConfirmation: _confirmPasswordController.text,
-        role: _selectedRole,
+        role: UserRole.WARGA, // Always register as citizen
       );
 
       if (success && mounted) {
-        // Navigate based on user role
-        if (authProvider.isCitizen) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
-          );
-        } else if (authProvider.isOfficer) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const OfficerHomeScreen()),
-          );
-        }
+        // Always navigate to citizen home screen
+        // Use pushAndRemoveUntil to prevent back navigation to register screen
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
+          (route) => false, // Remove all previous routes
+        );
       } else if (mounted && authProvider.errorMessage != null) {
         _showErrorSnackBar(authProvider.errorMessage!);
       }
@@ -116,57 +109,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ],
-                ),
-
-                const SizedBox(height: 32),
-
-                // User Role Selection
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'I am a:',
-                          style: AppTheme.heading3,
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: RadioListTile<UserRole>(
-                                title: const Text('Citizen'),
-                                subtitle: const Text('Report emergencies'),
-                                value: UserRole.WARGA,
-                                groupValue: _selectedRole,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedRole = value!;
-                                  });
-                                },
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                            Expanded(
-                              child: RadioListTile<UserRole>(
-                                title: const Text('Officer'),
-                                subtitle: const Text('Respond to cases'),
-                                value: UserRole.PETUGAS,
-                                groupValue: _selectedRole,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedRole = value!;
-                                  });
-                                },
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
 
                 const SizedBox(height: 24),

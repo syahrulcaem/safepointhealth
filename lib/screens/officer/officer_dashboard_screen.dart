@@ -4,6 +4,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/petugas_service.dart';
 import '../../services/location_tracking_service.dart';
 import '../../models/emergency_case.dart';
+import '../citizen/citizen_home_screen.dart';
 import 'case_detail_screen.dart';
 
 class OfficerDashboardScreen extends StatefulWidget {
@@ -1193,13 +1194,21 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     );
 
     if (shouldLogout == true && mounted) {
+      // Stop location tracking first
+      await LocationTrackingService.stopTracking();
+
+      // Logout from PetugasService (clears token, stops polling)
+      await PetugasService.logout();
+
+      // Logout from AuthProvider
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       await authProvider.logout();
 
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
+        // Navigate to citizen home screen (default screen for non-authenticated users)
+        Navigator.pushAndRemoveUntil(
           context,
-          '/login',
+          MaterialPageRoute(builder: (context) => const CitizenHomeScreen()),
           (route) => false,
         );
       }

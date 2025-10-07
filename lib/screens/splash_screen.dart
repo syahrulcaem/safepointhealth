@@ -88,42 +88,15 @@ class _SplashScreenState extends State<SplashScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // App Logo
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: AppTheme.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.emergency,
-                  size: 60,
-                  color: AppTheme.primaryRed,
-                ),
+              // SafePoint Health Logo (PNG only)
+              Image.asset(
+                'lib/assets/Safe Point Helath.png',
+                width: 1120,
+                height: 480,
+                fit: BoxFit.contain,
               ),
 
               const SizedBox(height: 24),
-
-              // App Name
-              const Text(
-                'SafePoint',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.white,
-                  letterSpacing: 1.2,
-                ),
-              ),
-
-              const SizedBox(height: 8),
 
               // Tagline
               const Text(
