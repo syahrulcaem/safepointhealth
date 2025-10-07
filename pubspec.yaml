@@ -27,17 +27,6 @@ dependencies:
   location: ^5.0.3
   google_maps_flutter: ^2.5.0
   flutter_launcher_icons: ^0.14.4
-  android: true
-  ios: true
-  image_path: assets/app/Icon.png
-  adaptive_icon_background: "#FFFFFF" # boleh warna lain
-  adaptive_icon_foreground: assets/app/Icon.png
-  android_12:
-    icon_foreground: assets/app/Icon.png
-    icon_background_color: "#FFFFFF"
-    icon_monochrome: assets/app/Icon.png
-  min_sdk_android: 21
-  remove_alpha_ios: true
 
 dev_dependencies:
   flutter_test:
