@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/petugas_service.dart';
+import '../../services/location_tracking_service.dart';
 import '../../models/emergency_case.dart';
+import 'case_detail_screen.dart';
 
 class OfficerDashboardScreen extends StatefulWidget {
   const OfficerDashboardScreen({super.key});
@@ -13,36 +15,64 @@ class OfficerDashboardScreen extends StatefulWidget {
 
 class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
   int _selectedIndex = 0;
-  Map<String, dynamic> _dashboardStats = {};
   List<EmergencyCase> _assignedCases = [];
+  int _unreadCount = 0;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    print('🚀 OfficerDashboard: initState called');
     _initializeData();
-    _listenToCaseUpdates();
+    _listenToUpdates();
   }
 
   void _initializeData() async {
+    print('🔧 Initializing dashboard data...');
+
+    // Wait a bit for authentication to complete
+    await Future.delayed(const Duration(milliseconds: 500));
+
     // Start polling for updates
     PetugasService.startPolling();
 
-    await _loadDashboardData();
+    // Start location tracking
+    final trackingStarted = await LocationTrackingService.startTracking();
+    if (trackingStarted) {
+      print('✅ Location tracking started');
+    } else {
+      print('❌ Failed to start location tracking');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Gagal mengaktifkan tracking lokasi. Periksa izin lokasi.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    }
+
+    try {
+      await _loadDashboardData();
+    } catch (e) {
+      print('❌ Error in _initializeData: $e');
+    }
   }
 
-  void _listenToCaseUpdates() {
-    PetugasService.caseUpdatesStream.listen((cases) {
+  void _listenToUpdates() {
+    // Listen to unread count updates
+    PetugasService.unreadCountStream.listen((unreadCount) {
       if (mounted) {
         setState(() {
-          _assignedCases = cases;
+          _unreadCount = unreadCount.unreadCount;
         });
 
-        // Show notification for new cases
-        if (cases.isNotEmpty) {
+        // Show notification for new assignments
+        if (unreadCount.hasNewAssignments && unreadCount.unreadCount > 0) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Ada ${cases.length} kasus baru!'),
+              content: Text('Ada ${unreadCount.unreadCount} kasus baru!'),
               backgroundColor: Colors.orange,
               action: SnackBarAction(
                 label: 'Lihat',
@@ -51,11 +81,20 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
                   setState(() {
                     _selectedIndex = 1; // Switch to cases tab
                   });
+                  _loadDashboardData(); // Reload data
                 },
               ),
             ),
           );
         }
+      }
+    });
+
+    // Listen to check updates
+    PetugasService.updatesStream.listen((updates) {
+      if (mounted && updates.hasUpdates) {
+        // Reload cases if there are updates
+        _loadAssignedCases();
       }
     });
   }
@@ -66,19 +105,14 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     });
 
     try {
-      // Load dashboard stats
-      final statsResponse = await PetugasService.getDashboardStats();
-      if (statsResponse.success) {
-        setState(() {
-          _dashboardStats = statsResponse.data ?? {};
-        });
-      }
-
       // Load assigned cases
-      final casesResponse = await PetugasService.getAssignedCases();
-      if (casesResponse.success) {
+      await _loadAssignedCases();
+
+      // Load unread count
+      final unreadResponse = await PetugasService.getUnreadCount();
+      if (unreadResponse.success && unreadResponse.data != null) {
         setState(() {
-          _assignedCases = casesResponse.data ?? [];
+          _unreadCount = unreadResponse.data!.unreadCount;
         });
       }
     } catch (e) {
@@ -90,9 +124,30 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     }
   }
 
+  Future<void> _loadAssignedCases() async {
+    print('🔄 Loading assigned cases...');
+    final casesResponse = await PetugasService.getAssignedCases();
+    print(
+        '📦 Cases response - Success: ${casesResponse.success}, Data count: ${casesResponse.data?.length ?? 0}');
+
+    if (casesResponse.success) {
+      setState(() {
+        _assignedCases = casesResponse.data ?? [];
+      });
+      print('✅ Assigned cases loaded: ${_assignedCases.length} cases');
+      if (_assignedCases.isNotEmpty) {
+        print(
+            '📋 First case: ${_assignedCases[0].id} - ${_assignedCases[0].category} - ${_assignedCases[0].status}');
+      }
+    } else {
+      print('❌ Failed to load cases: ${casesResponse.message}');
+    }
+  }
+
   @override
   void dispose() {
     PetugasService.stopPolling();
+    LocationTrackingService.stopTracking();
     super.dispose();
   }
 
@@ -155,167 +210,503 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     );
   }
 
-  Widget _buildDashboardTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildLocationStatusCard() {
+    final isTracking = LocationTrackingService.isTracking;
+    final lastUpdate = LocationTrackingService.lastUpdateTime;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isTracking ? Colors.green.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isTracking ? Colors.green : Colors.orange,
+          width: 1,
+        ),
+      ),
+      child: Row(
         children: [
-          // Status Card
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2E7D32), Color(0xFF4CAF50)],
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
+          Icon(
+            isTracking ? Icons.location_on : Icons.location_off,
+            color: isTracking ? Colors.green : Colors.orange,
+            size: 24,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Consumer<AuthProvider>(
-                      builder: (context, authProvider, child) {
-                        return Text(
-                          'Halo, ${authProvider.user?.name ?? "Petugas"}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Status: Bertugas',
+                Text(
+                  isTracking ? 'Tracking Aktif' : 'Tracking Tidak Aktif',
                   style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: isTracking
+                        ? Colors.green.shade900
+                        : Colors.orange.shade900,
+                  ),
+                ),
+                if (isTracking && lastUpdate != null)
+                  Text(
+                    'Update terakhir: ${_formatLastUpdate(lastUpdate)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                if (!isTracking)
+                  Text(
+                    'Lokasi tidak terkirim ke sistem',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (!isTracking)
+            TextButton(
+              onPressed: () async {
+                final started = await LocationTrackingService.startTracking();
+                if (mounted) {
+                  setState(() {});
+                  if (started) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Tracking lokasi diaktifkan'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Aktifkan'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _formatLastUpdate(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) {
+      return '${diff.inSeconds} detik lalu';
+    } else if (diff.inMinutes < 60) {
+      return '${diff.inMinutes} menit lalu';
+    } else {
+      return '${diff.inHours} jam lalu';
+    }
+  }
+
+  Widget _buildDashboardTab() {
+    return RefreshIndicator(
+      color: const Color(0xFF2E7D32),
+      onRefresh: _loadDashboardData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Location Tracking Status
+            _buildLocationStatusCard(),
+            const SizedBox(height: 16),
+
+            // Welcome Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF2E7D32), Color(0xFF4CAF50)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2E7D32).withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Consumer<AuthProvider>(
+                    builder: (context, authProvider, child) {
+                      return Row(
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                authProvider.user?.name
+                                        .substring(0, 1)
+                                        .toUpperCase() ??
+                                    'P',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Halo, ${authProvider.user?.name ?? "Petugas"}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.greenAccent,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Text(
+                                      'Bertugas',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_unreadCount > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.notifications_active,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '$_unreadCount',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Statistics Cards
+            const Text(
+              'Statistik Kasus',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    title: 'Total Kasus',
+                    value: _assignedCases.length.toString(),
+                    icon: Icons.assignment,
+                    color: const Color(0xFF2E7D32),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatCard(
+                    title: 'Ditugaskan',
+                    value: _assignedCases
+                        .where((c) => c.status == EmergencyStatus.DISPATCHED)
+                        .length
+                        .toString(),
+                    icon: Icons.work,
+                    color: Colors.blue,
                   ),
                 ),
               ],
             ),
-          ),
 
-          const SizedBox(height: 24),
+            const SizedBox(height: 12),
 
-          // Statistics Cards
-          const Text(
-            'Statistik Hari Ini',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    title: 'Dalam Proses',
+                    value: _assignedCases
+                        .where((c) =>
+                            c.status == EmergencyStatus.ON_THE_WAY ||
+                            c.status == EmergencyStatus.ON_SCENE)
+                        .length
+                        .toString(),
+                    icon: Icons.pending,
+                    color: Colors.orange,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatCard(
+                    title: 'Selesai',
+                    value: _assignedCases
+                        .where((c) => c.status == EmergencyStatus.RESOLVED)
+                        .length
+                        .toString(),
+                    icon: Icons.check_circle,
+                    color: Colors.green,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 16),
 
-          Row(
+            const SizedBox(height: 24),
+
+            // Recent Cases Section
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Kasus Terbaru',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _selectedIndex = 1;
+                    });
+                  },
+                  icon: const Icon(Icons.arrow_forward, size: 16),
+                  label: const Text('Lihat Semua'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF2E7D32),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Recent cases list (max 3)
+            if (_isLoading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF2E7D32),
+                  ),
+                ),
+              )
+            else if (_assignedCases.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.assignment_outlined,
+                      size: 48,
+                      color: Colors.grey[400],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Belum ada kasus ditugaskan',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Column(
+                children: _assignedCases
+                    .take(3)
+                    .map((case_) => _buildCaseCardCompact(case_))
+                    .toList(),
+              ),
+
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCaseCardCompact(EmergencyCase case_) {
+    Color statusColor;
+    String statusText;
+    IconData statusIcon;
+
+    switch (case_.status) {
+      case EmergencyStatus.DISPATCHED:
+        statusColor = Colors.blue;
+        statusText = 'Ditugaskan';
+        statusIcon = Icons.work;
+        break;
+      case EmergencyStatus.ON_THE_WAY:
+        statusColor = Colors.indigo;
+        statusText = 'Dalam Perjalanan';
+        statusIcon = Icons.directions_run;
+        break;
+      case EmergencyStatus.ON_SCENE:
+        statusColor = Colors.teal;
+        statusText = 'Di Lokasi';
+        statusIcon = Icons.location_on;
+        break;
+      case EmergencyStatus.RESOLVED:
+        statusColor = Colors.green;
+        statusText = 'Selesai';
+        statusIcon = Icons.check_circle;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusText = case_.statusDisplayName;
+        statusIcon = Icons.info;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _showCaseDetail(case_),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
             children: [
-              Expanded(
-                child: _buildStatCard(
-                  title: 'Kasus Baru',
-                  value: _dashboardStats['new_cases']?.toString() ?? '0',
-                  icon: Icons.add_alert,
-                  color: Colors.orange,
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  statusIcon,
+                  color: statusColor,
+                  size: 24,
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: _buildStatCard(
-                  title: 'Selesai',
-                  value: _dashboardStats['completed_cases']?.toString() ?? '0',
-                  icon: Icons.check_circle,
-                  color: Colors.green,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      case_.categoryDisplayName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      case_.description,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.access_time,
+                          size: 12,
+                          color: Colors.grey[500],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _formatDateTime(case_.createdAt),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
           ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  title: 'Dalam Proses',
-                  value:
-                      _dashboardStats['in_progress_cases']?.toString() ?? '0',
-                  icon: Icons.pending,
-                  color: Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  title: 'Total Kasus',
-                  value: _assignedCases.length.toString(),
-                  icon: Icons.assignment,
-                  color: Colors.purple,
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // Quick Actions
-          const Text(
-            'Aksi Cepat',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 1.5,
-            children: [
-              _buildActionCard(
-                title: 'Mulai Bertugas',
-                icon: Icons.play_arrow,
-                color: Colors.green,
-                onTap: () {
-                  // TODO: Implement start duty
-                },
-              ),
-              _buildActionCard(
-                title: 'Update Lokasi',
-                icon: Icons.location_on,
-                color: Colors.blue,
-                onTap: () {
-                  // TODO: Implement update location
-                },
-              ),
-              _buildActionCard(
-                title: 'Lihat Kasus',
-                icon: Icons.assignment,
-                color: Colors.orange,
-                onTap: () {
-                  setState(() {
-                    _selectedIndex = 1;
-                  });
-                },
-              ),
-              _buildActionCard(
-                title: 'Logout',
-                icon: Icons.logout,
-                color: Colors.red,
-                onTap: _logout,
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -389,6 +780,11 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     IconData statusIcon;
 
     switch (case_.status) {
+      case EmergencyStatus.NEW:
+        statusColor = Colors.grey;
+        statusText = 'Baru';
+        statusIcon = Icons.fiber_new;
+        break;
       case EmergencyStatus.PENDING:
         statusColor = Colors.orange;
         statusText = 'Menunggu';
@@ -413,6 +809,11 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
         statusColor = Colors.teal;
         statusText = 'Di Lokasi';
         statusIcon = Icons.location_on;
+        break;
+      case EmergencyStatus.CLOSED:
+        statusColor = Colors.green;
+        statusText = 'Ditutup';
+        statusIcon = Icons.check_circle;
         break;
       case EmergencyStatus.RESOLVED:
         statusColor = Colors.green;
@@ -473,11 +874,14 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
                     ),
                   ),
                   const Spacer(),
-                  Text(
-                    'ID: ${case_.id}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey,
+                  Flexible(
+                    child: Text(
+                      'ID: ${case_.id}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -686,38 +1090,46 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withOpacity(0.2),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 3,
-            offset: const Offset(0, 1),
+            color: color.withOpacity(0.1),
+            spreadRadius: 0,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Icon(icon, color: color, size: 24),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-            ],
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 24),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
-              color: Colors.grey,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -846,198 +1258,16 @@ class _OfficerDashboardScreenState extends State<OfficerDashboardScreen> {
     }
   }
 
-  void _showCaseDetail(EmergencyCase case_) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        maxChildSize: 0.95,
-        minChildSize: 0.5,
-        expand: false,
-        builder: (context, scrollController) => Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle bar
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Title
-              Row(
-                children: [
-                  Icon(
-                    Icons.assignment,
-                    color: const Color(0xFF2E7D32),
-                    size: 24,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Detail Kasus',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  children: [
-                    _buildDetailItem('ID Kasus', case_.id),
-                    _buildDetailItem('Status', case_.statusDisplayName),
-                    _buildDetailItem('Kategori', case_.categoryDisplayName),
-                    _buildDetailItem('Deskripsi', case_.description),
-                    _buildDetailItem('Nomor Telepon', case_.phone),
-                    _buildDetailItem(
-                      'Koordinat',
-                      '${case_.lat.toStringAsFixed(6)}, ${case_.lon.toStringAsFixed(6)}',
-                    ),
-                    if (case_.locatorText != null &&
-                        case_.locatorText!.isNotEmpty)
-                      _buildDetailItem('What3Words', case_.locatorText!),
-                    if (case_.accuracy != null)
-                      _buildDetailItem(
-                        'Akurasi GPS',
-                        '${case_.accuracy!.toStringAsFixed(1)} meter',
-                      ),
-                    _buildDetailItem(
-                      'Waktu Laporan',
-                      '${case_.createdAt.day}/${case_.createdAt.month}/${case_.createdAt.year} ${case_.createdAt.hour.toString().padLeft(2, '0')}:${case_.createdAt.minute.toString().padLeft(2, '0')}',
-                    ),
-                    if (case_.verifiedAt != null)
-                      _buildDetailItem(
-                        'Waktu Verifikasi',
-                        '${case_.verifiedAt!.day}/${case_.verifiedAt!.month}/${case_.verifiedAt!.year} ${case_.verifiedAt!.hour.toString().padLeft(2, '0')}:${case_.verifiedAt!.minute.toString().padLeft(2, '0')}',
-                      ),
-                    if (case_.dispatchedAt != null)
-                      _buildDetailItem(
-                        'Waktu Penugasan',
-                        '${case_.dispatchedAt!.day}/${case_.dispatchedAt!.month}/${case_.dispatchedAt!.year} ${case_.dispatchedAt!.hour.toString().padLeft(2, '0')}:${case_.dispatchedAt!.minute.toString().padLeft(2, '0')}',
-                      ),
-
-                    const SizedBox(height: 20),
-
-                    // Action buttons
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              // TODO: Open maps with coordinates
-                            },
-                            icon: const Icon(Icons.map),
-                            label: const Text('Lihat di Peta'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2E7D32),
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              // TODO: Make phone call
-                            },
-                            icon: const Icon(Icons.call),
-                            label: const Text('Hubungi'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    if (case_.notes != null && case_.notes!.isNotEmpty) ...[
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Catatan:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...case_.notes!.map((note) => Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    note.note,
-                                    style: const TextStyle(fontSize: 14),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _formatDateTime(note.createdAt),
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+  void _showCaseDetail(EmergencyCase case_) async {
+    // Navigate to detailed case screen
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CaseDetailScreen(caseId: case_.id),
       ),
     );
-  }
 
-  Widget _buildDetailItem(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.black87,
-            ),
-          ),
-        ],
-      ),
-    );
+    // Reload cases after returning from detail screen
+    _loadAssignedCases();
   }
 }
