@@ -39,3 +39,9 @@ flutter:
   # Assets
   assets:
     - lib/assets/Safe Point Helath.png
+
+# Configuration for flutter_launcher_icons (keeps rest of pubspec untouched)
+flutter_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "lib/assets/app/icon.png"
